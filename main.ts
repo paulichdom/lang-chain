@@ -78,4 +78,19 @@ const response8 = await nameGenerationChain1.invoke({
   product: 'fancy cookies',
 });
 
-console.log({ response8 });
+const stream = await nameGenerationChain.stream({
+  product: "really cool robots",
+});
+
+for await (const chunk of stream) {
+    // console.log(chunk);
+}
+
+const inputs = [
+  { product: "large calculators" },
+  { product: "alpaca wool sweaters" }
+];
+
+const response9 = await nameGenerationChain.batch(inputs);
+
+console.log({ response9 });
