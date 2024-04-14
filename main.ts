@@ -42,18 +42,40 @@ const response4 = await promptFromMessages.formatMessages({
 });
 
 const promptFromMessages1 = ChatPromptTemplate.fromMessages([
-  ["system", "You are an expert at picking company names."],
-  ["human", "What are three good names for a company that makes {product}?"]
+  ['system', 'You are an expert at picking company names.'],
+  ['human', 'What are three good names for a company that makes {product}?'],
 ]);
 
 const response5 = await promptFromMessages1.formatMessages({
-  product: "shiny objects"
+  product: 'shiny objects',
 });
 
 const chain = prompt.pipe(model);
 
 const response6 = await chain.invoke({
-  product: "colorful socks"
+  product: 'colorful socks',
 });
 
-console.log({ response6 });
+import { StringOutputParser } from '@langchain/core/output_parsers';
+
+const outputParser = new StringOutputParser();
+
+const nameGenerationChain = prompt.pipe(model).pipe(outputParser);
+
+const response7 = await nameGenerationChain.invoke({
+  product: 'fancy cookies',
+});
+
+import { RunnableSequence } from '@langchain/core/runnables';
+
+const nameGenerationChain1 = RunnableSequence.from([
+  prompt,
+  model,
+  outputParser,
+]);
+
+const response8 = await nameGenerationChain1.invoke({
+  product: 'fancy cookies',
+});
+
+console.log({ response8 });
