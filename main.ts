@@ -50,4 +50,10 @@ const response5 = await promptFromMessages1.formatMessages({
   product: "shiny objects"
 });
 
-console.log({ response5 });
+const chain = prompt.pipe(model);
+
+const response6 = await chain.invoke({
+  product: "colorful socks"
+});
+
+console.log({ response6 });
