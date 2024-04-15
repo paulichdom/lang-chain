@@ -79,18 +79,40 @@ const response8 = await nameGenerationChain1.invoke({
 });
 
 const stream = await nameGenerationChain.stream({
-  product: "really cool robots",
+  product: 'really cool robots',
 });
 
 for await (const chunk of stream) {
-    // console.log(chunk);
+  // console.log(chunk);
 }
 
 const inputs = [
-  { product: "large calculators" },
-  { product: "alpaca wool sweaters" }
+  { product: 'large calculators' },
+  { product: 'alpaca wool sweaters' },
 ];
 
 const response9 = await nameGenerationChain.batch(inputs);
 
-console.log({ response9 });
+// Loading
+
+import { GithubRepoLoader } from 'langchain/document_loaders/web/github';
+// Peer dependency, used to support .gitignore syntax
+import ignore from 'ignore';
+
+// Will not include anything under "ignorePaths"
+const loader = new GithubRepoLoader(
+  'https://github.com/langchain-ai/langchainjs',
+  { recursive: false, ignorePaths: ['*.md', 'yarn.lock'] }
+);
+
+const docs = await loader.load();
+
+// Peer dependency
+import * as parse from "pdf-parse";
+import { PDFLoader } from "langchain/document_loaders/fs/pdf";
+
+const loader1 = new PDFLoader("./data/MachineLearning-Lecture01.pdf");
+
+const rawCS229Docs = await loader1.load();
+
+console.log(rawCS229Docs.slice(0, 5));
