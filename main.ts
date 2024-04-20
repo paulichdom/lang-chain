@@ -69,3 +69,42 @@ const retrievalChain = RunnableSequence.from([
   new StringOutputParser(),
 ]);
 
+// Adding history
+
+import { MessagesPlaceholder } from '@langchain/core/prompts';
+
+const REPHRASE_QUESTION_SYSTEM_TEMPLATE = `Given the following conversation and a follow up question, 
+rephrase the follow up question to be a standalone question.`;
+
+const rephraseQuestionChainPrompt = ChatPromptTemplate.fromMessages([
+  ['system', REPHRASE_QUESTION_SYSTEM_TEMPLATE],
+  new MessagesPlaceholder('history'),
+  [
+    'human',
+    'Rephrase the following question as a standalone question:\n{question}',
+  ],
+]);
+
+const rephraseQuestionChain = RunnableSequence.from([
+  rephraseQuestionChainPrompt,
+  new ChatOpenAI({ temperature: 0.1, modelName: 'gpt-3.5-turbo-1106' }),
+  new StringOutputParser(),
+]);
+
+import { HumanMessage, AIMessage } from '@langchain/core/messages';
+
+const originalQuestion = 'What are the prerequisites for this course?';
+
+const originalAnswer = await retrievalChain.invoke({
+  question: originalQuestion,
+});
+
+const chatHistory = [
+  new HumanMessage(originalQuestion),
+  new AIMessage(originalAnswer),
+];
+
+await rephraseQuestionChain.invoke({
+  question: 'Can you list them in bullet point form?',
+  history: chatHistory,
+});
