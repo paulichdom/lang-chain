@@ -1,13 +1,15 @@
 import 'dotenv/config';
+import { RunnableSequence } from '@langchain/core/runnables';
 
-import { loadAndSplitChunks } from './lib/helpers.ts';
+import {
+  loadAndSplitChunks,
+  initializeVectorstoreWithDocuments,
+} from './lib/helpers.ts';
 
 const splitDocs = await loadAndSplitChunks({
   chunkSize: 1536,
   chunkOverlap: 128,
 });
-
-import { initializeVectorstoreWithDocuments } from './lib/helpers.ts';
 
 const vectorstore = await initializeVectorstoreWithDocuments({
   documents: splitDocs,
@@ -15,117 +17,31 @@ const vectorstore = await initializeVectorstoreWithDocuments({
 
 const retriever = vectorstore.asRetriever();
 
-import { RunnableSequence } from '@langchain/core/runnables';
-import { Document } from '@langchain/core/documents';
-
 const convertDocsToString = (documents: Document[]): string => {
   return documents
-    .map((document) => {
-      return `<doc>\n${document.pageContent}\n</doc>`;
-    })
+    .map((document) => `<doc>\n${document.pageContent}\n</doc>`)
     .join('\n');
 };
 
 const documentRetrievalChain = RunnableSequence.from([
-  (input) => input.question,
+  (input) => input.standalone_question,
   retriever,
   convertDocsToString,
 ]);
 
-import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { createRephraseQuestionChain } from './lib/helpers.ts';
 
-const TEMPLATE_STRING = `You are an experienced researcher, 
-expert at interpreting and answering questions based on provided sources.
-Using the provided context, answer the user's question 
-to the best of your ability using only the resources provided. 
-Be verbose!
+const rephraseQuestionChain = createRephraseQuestionChain();
 
-<context>
+import {
+  ChatPromptTemplate,
+  MessagesPlaceholder,
+} from '@langchain/core/prompts';
 
-{context}
-
-</context>
-
-Now, answer this question using the above context:
-
-{question}`;
-
-const answerGenerationPrompt = ChatPromptTemplate.fromTemplate(TEMPLATE_STRING);
-
-import { ChatOpenAI } from '@langchain/openai';
-import { StringOutputParser } from '@langchain/core/output_parsers';
-
-const model = new ChatOpenAI({
-  modelName: 'gpt-3.5-turbo-1106',
-});
-
-const retrievalChain = RunnableSequence.from([
-  {
-    context: documentRetrievalChain,
-    question: (input) => input.question,
-  },
-  answerGenerationPrompt,
-  model,
-  new StringOutputParser(),
-]);
-
-// Adding history
-
-import { MessagesPlaceholder } from '@langchain/core/prompts';
-
-const REPHRASE_QUESTION_SYSTEM_TEMPLATE = `Given the following conversation and a follow up question, 
-rephrase the follow up question to be a standalone question.`;
-
-const rephraseQuestionChainPrompt = ChatPromptTemplate.fromMessages([
-  ['system', REPHRASE_QUESTION_SYSTEM_TEMPLATE],
-  new MessagesPlaceholder('history'),
-  [
-    'human',
-    'Rephrase the following question as a standalone question:\n{question}',
-  ],
-]);
-
-const rephraseQuestionChain = RunnableSequence.from([
-  rephraseQuestionChainPrompt,
-  new ChatOpenAI({ temperature: 0.1, modelName: 'gpt-3.5-turbo-1106' }),
-  new StringOutputParser(),
-]);
-
-import { HumanMessage, AIMessage } from '@langchain/core/messages';
-
-const originalQuestion = 'What are the prerequisites for this course?';
-
-const originalAnswer = await retrievalChain.invoke({
-  question: originalQuestion,
-});
-
-const chatHistory = [
-  new HumanMessage(originalQuestion),
-  new AIMessage(originalAnswer),
-];
-
-const response = await rephraseQuestionChain.invoke({
-  question: 'Can you list them in bullet point form?',
-  history: chatHistory,
-});
-
-// Putting it all together
-
-const convertDocsToString1 = (documents: Document[]): string => {
-  return documents.map((document) => `<doc>\n${document.pageContent}\n</doc>`).join("\n");
-};
-
-const documentRetrievalChain1 = RunnableSequence.from([
-  (input) => input.standalone_question,
-  retriever,
-  convertDocsToString1,
-]);
-
-const ANSWER_CHAIN_SYSTEM_TEMPLATE = `You are an experienced researcher, 
+const ANSWER_CHAIN_SYSTEM_TEMPLATE = `You are an experienced researcher,
 expert at interpreting and answering questions based on provided sources.
 Using the below provided context and chat history, 
-answer the user's question to the best of 
-your ability 
+answer the user's question to the best of your ability
 using only the resources provided. Be verbose!
 
 <context>
@@ -133,63 +49,159 @@ using only the resources provided. Be verbose!
 </context>`;
 
 const answerGenerationChainPrompt = ChatPromptTemplate.fromMessages([
-  ["system", ANSWER_CHAIN_SYSTEM_TEMPLATE],
-  new MessagesPlaceholder("history"),
+  ['system', ANSWER_CHAIN_SYSTEM_TEMPLATE],
+  new MessagesPlaceholder('history'),
   [
-    "human", 
-    "Now, answer this question using the previous context and chat history:\n{standalone_question}"
-  ]
+    'human',
+    `Now, answer this question using the previous context and chat history:
+  
+    {standalone_question}`,
+  ],
 ]);
 
-await answerGenerationChainPrompt.formatMessages({
-  context: "fake retrieved content",
-  standalone_question: "Why is the sky blue?",
-  history: [
-    new HumanMessage("How are you?"),
-    new AIMessage("Fine, thank you!")
-  ]
-});
-
-import { RunnablePassthrough } from "@langchain/core/runnables";
+import { RunnablePassthrough } from '@langchain/core/runnables';
+import { ChatOpenAI } from '@langchain/openai';
 
 const conversationalRetrievalChain = RunnableSequence.from([
   RunnablePassthrough.assign({
     standalone_question: rephraseQuestionChain,
   }),
   RunnablePassthrough.assign({
-    context: documentRetrievalChain1,
+    context: documentRetrievalChain,
   }),
   answerGenerationChainPrompt,
-  new ChatOpenAI({ modelName: "gpt-3.5-turbo" }),
-  new StringOutputParser(),
+  new ChatOpenAI({ modelName: 'gpt-3.5-turbo-1106' }),
 ]);
 
-import { RunnableWithMessageHistory } from "@langchain/core/runnables";
-import { ChatMessageHistory } from "langchain/stores/message/in_memory";
+import { HttpResponseOutputParser } from 'langchain/output_parsers';
+
+// "text/event-stream" is also supported
+const httpResponseOutputParser = new HttpResponseOutputParser({
+  contentType: 'text/plain',
+});
+
+import { RunnableWithMessageHistory } from '@langchain/core/runnables';
+import { ChatMessageHistory } from 'langchain/stores/message/in_memory';
 
 const messageHistory = new ChatMessageHistory();
 
-const finalRetrievalChain = new RunnableWithMessageHistory({
+/* const finalRetrievalChain = new RunnableWithMessageHistory({
   runnable: conversationalRetrievalChain,
   getMessageHistory: (_sessionId) => messageHistory,
   historyMessagesKey: "history",
   inputMessagesKey: "question",
+}).pipe(httpResponseOutputParser); */
+
+const messageHistories = {};
+
+const getMessageHistoryForSession = (sessionId) => {
+  if (messageHistories[sessionId] !== undefined) {
+    return messageHistories[sessionId];
+  }
+  const newChatSessionHistory = new ChatMessageHistory();
+  messageHistories[sessionId] = newChatSessionHistory;
+  return newChatSessionHistory;
+};
+
+const finalRetrievalChain = new RunnableWithMessageHistory({
+  runnable: conversationalRetrievalChain,
+  getMessageHistory: getMessageHistoryForSession,
+  inputMessagesKey: 'question',
+  historyMessagesKey: 'history',
+}).pipe(httpResponseOutputParser);
+
+const port = 8087;
+
+const handler = async (request: Request): Promise<Response> => {
+  const body = await request.json();
+  const stream = await finalRetrievalChain.stream(
+    {
+      question: body.question,
+    },
+    { configurable: { sessionId: body.session_id } }
+  );
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/plain',
+    },
+  });
+};
+
+Deno.serve({ port }, handler);
+
+const decoder = new TextDecoder();
+
+// readChunks() reads from the provided reader and yields the results into an async iterable
+function readChunks(reader) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      let readResult = await reader.read();
+      while (!readResult.done) {
+        yield decoder.decode(readResult.value);
+        readResult = await reader.read();
+      }
+    },
+  };
+}
+
+// First question
+
+/* const response = await fetch(`http://localhost:${port}`, {
+    method: "POST",
+    headers: {
+        "content-type": "application/json",
+    },
+    body: JSON.stringify({
+        question: "What are the prerequisites for this course?",
+        session_id: "1", // Should randomly generate/assign
+    })
 });
 
-const originalQuestion1 = "What are the prerequisites for this course?";
+// response.body is a ReadableStream
+const reader = response.body?.getReader();
 
-const originalAnswer1 = await finalRetrievalChain.invoke({
-  question: originalQuestion1,
-}, {
-  configurable: { sessionId: "test" }
+for await (const chunk of readChunks(reader)) {
+  console.log("CHUNK:", chunk);
+} */
+
+// Second question
+
+/* const response1 = await fetch(`http://localhost:${port}`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+  },
+  body: JSON.stringify({
+    question: "Can you list them in bullet point format?",
+    session_id: "1", // Should randomly generate/assign
+  })
 });
 
-const finalResult = await finalRetrievalChain.invoke({
-  question: "Can you list them in bullet point form?",
-}, {
-  configurable: { sessionId: "test" }
+// response.body is a ReadableStream
+const reader1 = response1.body?.getReader();
+
+for await (const chunk of readChunks(reader1)) {
+  console.log("CHUNK:", chunk);
+} */
+
+// Third question
+
+const response = await fetch(`http://localhost:${port}`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+  },
+  body: JSON.stringify({
+    question: "What did I just ask you?",
+    session_id: "2", // Should randomly generate/assign
+  })
 });
 
-console.log(finalResult);
+// response.body is a ReadableStream
+const reader = response.body?.getReader();
 
-
+for await (const chunk of readChunks(reader)) {
+  console.log("CHUNK:", chunk);
+}
